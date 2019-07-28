@@ -51,6 +51,8 @@ bool ExtendedCPU::OnNOOPExtension(byte Op)
 // Extension: BitN+Stop set CPU speed to N
 // Extension: BitN+Disp write memory out to Serial
 // Extension: BitN+Set set memory from Serial
+// Extension: Stop+Disp display current page -- added for Kenbak-1K
+// Extension: Stop+Set set curr page from input reg -- added for Kenbak-1K
 //
 // Press at power on to configure program to auto-run
 // * Stop & BitN  = load built-in program N
@@ -69,6 +71,7 @@ void MCP::Init()
   m_Data = 0x00;
   m_Control = 0x00;
   m_Address = 0x00;
+  m_Page = 0x00;  
   SetMode(eInput);
   leds.Display(m_Data, m_Control);
 
@@ -292,6 +295,15 @@ void MCP::OnAddressDisplay(byte Chord)
     // Extension: BitN+Disp = write program memory to serial
     SerializeMemory(false, Chord);
   }
+  else if (Chord == Buttons::eRunStop)
+  {
+    if (config.m_bKenbakExt)  // only responds if extensions are enabled
+    {
+      // Extension: Stop+Disp = display current page to LEDs
+      m_Data = m_Page;
+      Blink(eAddress);
+    }
+  }   
   else
   {
     m_Data = m_Address;
@@ -303,9 +315,18 @@ void MCP::OnAddressSet(byte Chord)
 {
   if (Chord <= Buttons::eBit7)
   {
-    // Extension: BitN+Stor = store program memory from serial
+    // Extension: BitN+Set = store program memory from serial
     SerializeMemory(true, Chord);
   }
+  else if (Chord == Buttons::eRunStop)
+  {
+    if (config.m_bKenbakExt)  // only responds if extensions are enabled
+    {
+      // Extension: Stop+Set = set current page to value in lower two bits of input register
+      m_Page = CPU::cpu->Read(REG_INPUT_IDX) & 3;
+      Blink(eAddress);
+    }
+  }  
   else
   {
     m_Address = CPU::cpu->Read(REG_INPUT_IDX);
@@ -335,7 +356,7 @@ void MCP::OnMemoryRead(byte Chord)
   }
   else
   {
-    m_Data = CPU::cpu->Read(m_Address++);
+    m_Data = CPU::cpu->Read(256*m_Page+m_Address++);  // m_Page will be 0 if extensions are disabled
     SetMode(eMemory);
     Blink(eRun);
   }
@@ -366,6 +387,7 @@ void MCP::OnMemoryStore(byte Chord)
     // Extension: Clear+Store clear memory
     CPU::cpu->ClearAllMemory();
     m_Address = REG_P_IDX + 1;
+    m_Page = 0;
     config.m_iCycleDelayMilliseconds = 0;
     CPU::cpu->Write(REG_P_IDX, m_Address);
     SetMode(eNone);
@@ -373,7 +395,7 @@ void MCP::OnMemoryStore(byte Chord)
   else
   {
     byte Value = CPU::cpu->Read(REG_INPUT_IDX);
-    CPU::cpu->Write(m_Address++, Value);
+    CPU::cpu->Write(256*m_Page+m_Address++, Value);     // m_Page will be 0 if extensions are disabled
     Blink(eRun);
   }
 }
@@ -465,9 +487,11 @@ void MCP::SerializeMemory(bool Input, byte Chord)
     int value = -1;
     int ch = -1;
     byte sum = 0;
+
+    int highAddr = (config.m_bKenbakExt) ? 1024 : 256;
   
     Serial.print("[0");
-    while (addr < 256)
+    while (addr < highAddr)
     {
       if (buttons.GetButtons(State, Pressed, false) && buttons.IsPressed(Pressed, Buttons::eRunStop))
       {
@@ -507,7 +531,7 @@ void MCP::SerializeMemory(bool Input, byte Chord)
             sum += value;
             bitWrite(Control, eRun, !bitRead(Control, eRun)); // flash Run
             leds.Display(m_Data, Control);
-            if ((addr % 16) == 0 && addr < 256)
+            if ((addr % 16) == 0 && addr < highAddr)
               Serial.print(addr / 16, HEX); // progress
             value = -1;
           }
@@ -515,7 +539,7 @@ void MCP::SerializeMemory(bool Input, byte Chord)
       }
     }
     
-    if (value != -1 && addr < 256)  // ended on a number with no delimeter, save it
+    if (value != -1 && addr < highAddr)  // ended on a number with no delimeter, save it
     {
       CPU::cpu->Write(addr, value);
       sum += value;
@@ -529,7 +553,9 @@ void MCP::SerializeMemory(bool Input, byte Chord)
   }
   else  // WRITE program memory to Serial
   {
-    for (int addr = 0; addr < 256; addr++)
+    int highAddr = (config.m_bKenbakExt) ? 1024 : 256;
+    
+    for (int addr = 0; addr < highAddr; addr++)
     {
       if (buttons.GetButtons(State, Pressed, false) && buttons.IsPressed(Pressed, Buttons::eRunStop))
       {
@@ -587,4 +613,3 @@ void MCP::AutoRun(byte Auto)
 
 
 MCP mcp = MCP();
-

@@ -10,12 +10,14 @@
 #include "Memory.h"
 
 #define TOGGLE_BITS_FLAG 0x01
+#define KENBAKEXT_BITS_FLAG 0x02  // enabled 1K and opcode extensions
 
 Config::Config():
   m_bToggleBits(true),
   m_iCycleDelayMilliseconds(0),
   m_iEEPROMSlotMap(0x0A),
-  m_iAutoRunProgram(0)
+  m_iAutoRunProgram(0),
+  m_bKenbakExt(false)
 {
     m_EEPROMOffset = m_RAMOffset = m_EEPROMSize = 0;
 
@@ -241,6 +243,11 @@ void Config::SetCPUSpeed(byte Bit)
 void Config::UpdateFlags(byte Value)
 {
   m_bToggleBits = (Value & TOGGLE_BITS_FLAG) == TOGGLE_BITS_FLAG;
+  m_bKenbakExt = (Value & KENBAKEXT_BITS_FLAG) == KENBAKEXT_BITS_FLAG;
+  if (!m_bKenbakExt)
+  {
+    mcp.m_Page = 0;		// if extensions not enabled, force page # to 0
+  }
 }
 
 void Config::CheckStartupConfig()
@@ -320,4 +327,3 @@ byte Config::ReadFromEEPROM(bool Read, byte EEPROMPage)
 }
 
 Config config = Config();
-

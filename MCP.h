@@ -56,10 +56,11 @@ private:
   byte m_Control;
   byte m_Mode;
   byte m_Address;
+  byte m_Page;    // added for 1K address extension
   
   friend class ExtendedCPU;
+  friend class Config;      // so m_Page can be set to 0 if extensions are disabled
 };
 
 extern MCP mcp;
 #endif
-

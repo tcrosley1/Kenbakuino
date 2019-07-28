@@ -60,6 +60,7 @@ public:
   byte m_iCycleDelayMilliseconds;      // delay each cpu "cycle"
   byte m_iEEPROMSlotMap;  // indicates halving of program slots in EEPROM, see Memory::BuildSlots()
   byte m_iAutoRunProgram;
+  bool m_bKenbakExt;  // if true, 1K extensions are enabled
   
 private:
   void UpdateFlags(byte Value);
@@ -73,4 +74,3 @@ private:
 extern Config config;
 
 #endif
-

@@ -1,6 +1,24 @@
 # Kenbakuino
 Arduino emulation of the KENBAK-1
 
+----------
+**NOTE: **This GitHub repo is a fork of Mark Wilson's original Kenbakuino project, which can be found here:  https://github.com/funnypolynomial/Kenbakuino
+
+This version of the emulator adds the following features to the original:
+
+1. Expanding the Kenbak's memory from 256 bytes to 1 KB
+2. Adding a new instruction (LDACP), using the opcode for an unnecessary 21-byte NOP opcode.
+
+When this features are not enabled (default mode), the emulator is identical to the one posted at the above link, as of June 2019.
+
+More information on these changes can be found in the file:
+
+kenbak-1K_extensions.txt
+
+The remainder of this document is from the original repo.
+
+----------
+
 This is an Arduino-based emulation of the 
 [KENBAK-1](https://en.wikipedia.org/wiki/Kenbak-1 "Wikipedia"), considered by some to be the first "personal computer".  It was first advertised for sale in the September 1971 issue of Scientific American.
 

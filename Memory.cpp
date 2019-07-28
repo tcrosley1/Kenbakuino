@@ -90,15 +90,26 @@ bool Memory::LoadStandardProgram(byte Index)
 bool Memory::ReadMemoryFromEEPROMSlot(byte Slot)
 {
   byte* pMem = CPU::cpu->Memory();
-  if (Slot <= 0x07 && m_pSlotSize[Slot])
+  if (config.m_bKenbakExt)    // if extensions enabled, always reads complete 1K memory from EEPROM
   {
-    int Base = m_pSlotStartAddr[Slot];
-    int Size = m_pSlotSize[Slot];
-    for (int Offset = 0;  Offset < Size; Offset++)
+      for (int Offset = 0; Offset < 1024; Offset++)
+      {
+        pMem[Offset] = EEPROM.read(Offset);
+      }
+      return true;    
+  }
+  else
+  {
+    if (Slot <= 0x07 && m_pSlotSize[Slot])
     {
-      pMem[Offset] = EEPROM.read(Base + Offset);
+      int Base = m_pSlotStartAddr[Slot];
+      int Size = m_pSlotSize[Slot];
+      for (int Offset = 0;  Offset < Size; Offset++)
+      {
+        pMem[Offset] = EEPROM.read(Base + Offset);
+      }
+      return true;
     }
-    return true;
   }
   return false;
 }
@@ -106,15 +117,26 @@ bool Memory::ReadMemoryFromEEPROMSlot(byte Slot)
 bool Memory::WriteMemoryToEEPROMSlot(byte Slot)
 {
   byte* pMem = CPU::cpu->Memory();
-  if (Slot <= 0x07 && m_pSlotSize[Slot])
+  if (config.m_bKenbakExt)    // if extensions enabled, always writes complete 1K memory to EEPROM
   {
-    int Base = m_pSlotStartAddr[Slot];
-    int Size = m_pSlotSize[Slot];
-    for (int Offset = 0;  Offset < Size; Offset++)
+      for (int Offset = 0; Offset < 1024; Offset++)
+      {
+         EEPROM.write(Offset, pMem[Offset]);
+      }
+      return true;    
+  }
+  else  
+  {
+    if (Slot <= 0x07 && m_pSlotSize[Slot])
     {
-       EEPROM.write(Base + Offset, pMem[Offset]);
+      int Base = m_pSlotStartAddr[Slot];
+      int Size = m_pSlotSize[Slot];
+      for (int Offset = 0;  Offset < Size; Offset++)
+      {
+         EEPROM.write(Base + Offset, pMem[Offset]);
+      }
+      return true;
     }
-    return true;
   }
   return false;
 }
@@ -165,5 +187,3 @@ int Memory::SlotSize(byte Slot)
 }
 
 Memory memory = Memory();
-
-

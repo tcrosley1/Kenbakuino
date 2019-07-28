@@ -1,0 +1,263 @@
+           Kenbak-uino-1K
+an Arduino-based emulation of the "KENBAK-1"
+with 1KB memory
+           by Tom Crosley
+     (tcrosley at softwest dot com)
+             July, 2019
+
+based on:
+
+            Kenbak-uino
+an Arduino-based emulation of the "KENBAK-1"
+          by Mark Wilson
+     (kiwimew at gmail dot com)
+
+NOTE: see README.md and kenbakuino.txt for more information on the original
+version of Mark's Wilson's emulator.  This file duscusses only the extensions.
+          
+1 Introduction
+--------------
+I was fortunate enough to have owned one of the original Kenbak-1 computers,
+which I bought in 1971 from an ad in Scientific American for $750.  I was
+just starting grad school for my MSCS degree, and wanted a computer to write
+assembly code for that was simpler and more available than the school's UNIVAC
+1108 mainframe.  I had my Kenbak for about 30 years before finally selling
+it for much more than I paid for it.
+
+I discovered an on-line emulator written in Javascript for the Kenbak-1 a while
+back here:
+    http://www.neocomputer.org/kenbak/kenbak1-JS.html
+but I missed the physical buttons and lights.  When I saw Chris Davis' µKenbak-1,
+I knew right away I wanted one:
+    https://www.adwaterandstir.com/product/kenbak-1/
+As soon as I got it, I wrote an assembler for it in Python (more about that
+below).
+
+The Kenbak-1 was a third-generation computer, meaning it was built from TTL
+logic chips, but not use a microprocessor.  The documentation included a full
+set of schematics, along with a theory of operation and state diagrams.  Thus
+it was actually possible to modify the CPU.  I had modified mine to add an
+interrupt capability, which I used to interface with an ASR-33 Teletype.
+
+When writing the assembler, I rediscovered the details of the instruction set.
+I noticed that the unconditional jump instruction used five opcodes (0343
+to 0347), but only needed one.  It occurred to me I could use the lower two
+bits of the opcode to specify a page number, allowing me to expand the memory
+to 1024 bytes instead of the original 256.  It turned out the emulator,
+running on an Atmega328, had just a little over 1 KB of RAM left over.
+
+Since this change is something I could actually have done back in the 1970's
+on my "real" Kenbak-1, had I thought of it, I feel it is a reasonable
+extension to make to the emulator -- and quadruple the memory.  While the
+jumps allow the program counter to go anywhere in the 1 KB memory, all data
+references still go to the first page (zero page, as denoted in the 680x and
+6502 microprocessors of the 70's).
+
+When testing my changes, I found it would be nice however to locate tables
+and strings in the other pages, which would require loading data from the
+current page.  It seemed to me that the two-byte opcodes 031x were
+completely redundant, since they could be replaced by two one-byte NOPs with an
+opcodes of 2x0.  Furthermore, the 031x opcodes had all the address modes
+available. So I created a new instruction, LDACP, which loads the accumulator
+with data from the current page instead of page zero.  It uses opcodes 0313 to
+0317.
+
+2 Enabling/disabling the extensions
+-----------------------------------
+
+By default, the 1 KB memory extension and the new LDACP instruction are
+disabled, and the emulator runs exactly the same as Mark's.  I have added a
+new bit (1) in the control byte (010) of the user RAM in the RTC module.
+Bit 0, if set, makes the input buttons toggle.  Bit 1 enables the extensions.
+
+They can be enabled either programmatically or from the front panel.  To do so
+in your program, include the following at the start of a program:
+
+SYS_SETCONTROL equ 0210             control reg
+        sysp   SYS_SETCONTROL,3     set bits 0 and 1
+
+The other way is to do the following from the front panel:
+
+        Enter 010 into the input register (buttons 0-7)
+        Press SET to store it into the Address register
+        Enter 003 into the input register
+        Press STOP+STORE to load it into the control byte 010
+
+3 Details of jumping to another page
+------------------------------------
+
+With the extensions disabled, all opcodes (0343-0347) for the unconditional
+jump instruction jump to locations in the first 256 bytes of memory.  With
+extensions enabled, the low two bits of opcodes 0344-0347 specify a page
+number 0-3, which is placed in the upper two bits (6 and 7) of memory location
+0203 (X register carry and overflow flags).  I chose this location simply
+because the PC is at location 003, so 0203 was easy to remember.
+
+page     locations (octal)     locations (decimal)    unc. jump opcode
+----     -----------------     -------------------    ----------------
+
+  0        0000 - 0377               0 - 255               0344
+  1        0400 - 0777             256 - 511               0345
+  2        1000 - 1377             512 - 767               0346
+  3        1400 - 1777             768 - 1023              0347
+
+All of this is handled by the assembler; you still do an unconditional jump by
+coding:   jmp label   but if the label is greater than 0377, a page jump will
+take place.  If a jump is made to a different page, the assembler shows the
+new address in parentheses in the listing, e.g.:
+
+0010: 346 004(1004) 010         jmp     newpage     jump to address on page 2
+
+Here the current PC is on page 0 (0010), and a jump is made to a label whose
+value is 01004, which is on page 2.  The assembler chooses an opcode of 0346
+(low two bits equal 2).  The operand is just 004 since it still has to fit in
+one byte.  The emulator will place the low two bits of the jump opcode into 
+the high two bits of location 0203.
+
+With extensions enabled, the effective PC is always the combination of the
+high two bits of location 0203 multiplied by 256 plus the value of location
+003.
+
+To maintain comparability with old object code that might have used opcode
+0343 for an uncondition jump, that opcode is treated the same as 0344.
+
+Note that only unconditional direct jumps can cross page boundaries.
+Conditional and/or indirect jumps and all forms of calls (jump and mark in
+the original Kenbak-1 terms) always go to the current page.
+
+With extensions enabled, the following new button combinations can be used
+to display or set the current page from the front panel when entering or
+displaying memory locations:
+
+    STOP+DISP - display the current page (0-3) in the output register (LEDs)
+    STOP+SET -- set current page to the low two bits of the input register
+
+The current page location is then used along with the DISP and SET address
+buttons to manually display memory using the READ button, or to set a
+memory location using the STORE button.  (This is separate from the run-time
+page bits in location 0203 which are combined with the program counter.)
+
+For example, to display the contents of memory location 01175, which is in
+page 2, do the following:
+
+        Enter 002 into the input register (buttons 0-7)
+        Press STOP+DISP to store it as the current page (2)
+        Enter 0175 into the input register
+        Press SET to store it into the Address register
+        Press READ to display the contents of location 01175
+
+With extensions enabled, all memory references (second byte after the opcode)
+still go to page zero, with the following exceptions.         
+
+1. As mentioned earlier, conditional jumps go to the effective address which
+is the combination of the 8-byte value following the opcode, plus the page
+number (top two bits of location 0203) times 256.
+
+2. Call instructions, as mentioned earlier, can only call subroutines in the
+same page they are located on.  The call instruction deposits the value of the
+PC+2 into the first location of the subroutine, and the subroutine starts
+executing at the location after that.  When a subroutine returns, it uses the
+indirect version of the jump instruction.  So this indirect reference goes to
+the same page as the jump instruction, not page zero as would any other
+indirect reference (except as noted next).
+
+3. Instructions using indirect PC relative addressing also reference the
+current page, because to do so otherwise wouldn't make sense.  This means
+instructions like:   lda (pc),x   which loads the value of the location
+pointed to be the combination of the pc plus the value of the X register to
+the A accumulator.  Although this does allow data to be referenced on the
+current page, it is awkward to use, thus the instruction of the LDACP
+instruction.
+
+Finally, note that code does not continue from the end of one page to the
+next automatically.  Instead it wraps around back to the beginning of the
+current page, since the page bits are not modified when this occurs.  You
+must use jumps to go from one page to another.
+
+4 Details of the LDACP instruction
+----------------------------------
+
+The LDACP (load accumulator A from current page) can be used with any of the
+address modes, although not all are useful.  For example, immediate
+addressing    ldacp #10    is exactly the same as   lda #10.
+
+    LDACP addr   loads the contents of memory location addr on the current
+                 page.
+    LDACP (addr) loads the contents of memory location addr on page zero,
+                 and uses that to reference a location on the current page.
+                 You can set up the indirect address using:
+                          LDA  #cpaddr  which will get the location of the
+                                        address on the current page
+                          STA  addr     which references a zero page location
+    LDACP n,X   assuming the X register has been loaded with a location on
+                the current page, e.g.   LDX #cpaddr   then this loads the
+                contents of memory location on the current page, pointed to by
+                the combination of the contents of the X register + n
+    LDACP addr,X    loads the contents of memory location which is the
+                combination of addr on the current page and the contents of
+                the X register
+    LDACP (addr),X  loads the contents of memory location addr on page zero,
+                adds that to the contents of the X register, and uses that
+                to reference a location on the current page.
+
+5 Other changes
+---------------
+
+One other change, when the extensions are enabled, instead of loading Mark's
+Sieve of Eratosthenes program when pressing STOP+6, it loads my Simon Says
+program instead.  The source code is available here, and it also contains the
+instructions:
+
+http://www.softwest.com/kenbak_asm/simon_says.asm
+
+Note -- it actually doesn't use any of the extensions itself, and will run
+fine on the original emulator.
+
+If you want to load the Sieve of Eratosthenes program instead, just disable
+the extensions.  It's still there.
+
+6 Software tools support
+------------------------
+
+I have written an assembler in Python that can be used to assemble programs
+for these new extensions.  It can be downloaded from one of my websites:
+
+http://www.softwest.com/kenbak_asm/kenbak_asm.exe   Windows executable
+http://www.softwest.com/kenbak_asm/kenbak_asm.py    Python source
+http://www.softwest.com/kenbak_asm/test.asm         test program for assembler
+http://www.softwest.com/kenbak_asm/test1k.asm       test prog for extensions
+
+Instructions for using it are at the beginning of the Python (.py) file, so
+they won't be repeated here.  However, when assembling a program that uses the
+extensions, you must use the -x option, e.g.
+
+    kenbak_asm -x filename.asm
+
+The test1k.asm program tests (and illustrates) some of the extensions
+discussed in this document.
+
+I have also written a downloader program to transfer the contents of the
+binary file generated by the assembler (filename.out) from a PC to the
+µKenbak-1.  It can be downloaded from:
+
+http://www.softwest.com/kenbak_asm/sendtokenbak.exe
+http://www.softwest.com/kenbak_asm/sendtokenbak.py
+http://www.softwest.com/kenbak_asm/sendtokenbak.params
+
+Again, documentation is at the beginning of the Python file.
+ 
+
+
+
+
+
+
+
+ 
+
+
+
+
+
+
+

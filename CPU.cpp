@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include "CPU.h"
+#include "Config.h" // added for m_bKenbakExt
 
 // Kenbak-uino
 // The "CPU"
@@ -53,7 +54,7 @@ P--           -Q-         --R
 ----Or, And, LNeg----          P == 3
 P--           -Q-         --R
 3             0 = Or
-              1 = (NOP)
+              1 = Load A current page (was NOP)
               2 = And
               3 - LNeg    3 = Const
                           4 = Mem
@@ -98,13 +99,13 @@ void CPU::Init()
 {
 }
 
-byte CPU::Read(byte Addr)
+byte CPU::Read(word Addr)
 {
   // get the byte at Addr
   return m_Memory[Addr];
 }
 
-void CPU::Write(byte Addr, byte Value)
+void CPU::Write(word Addr, byte Value)
 {
   // set the byte at Addr
   m_Memory[Addr] = Value;
@@ -117,22 +118,59 @@ byte CPU::GetBitField(byte Byte, int BitNum, int NumBits)
   return (Byte >> BitNum) & (0xFF >> (8 - NumBits));
 }
 
-byte* CPU::GetAddr(byte* pByte, byte Mode)
+byte* CPU::GetAddr(byte* pByte, byte Mode, bool IndPaged)
 {
-  // do the addressing modes
+  // do the addressing modes -- all memory references except IndPaged are to page 0
+  // calculate indirect address if needed -- if using PC, will go to current page
+  word current_page = ((word)m_Memory[REG_FLAGS_X_IDX] << 2) & 0x300;
+  word indirectAddr;
+  if (*pByte==REG_P_IDX)
+  {
+    indirectAddr = current_page + m_Memory[REG_P_IDX]; 
+  }
+  else
+  {
+    indirectAddr = m_Memory[*pByte];  
+  }
   switch (Mode)
   {
-    case OP_MODE_MEM:      return m_Memory + (*pByte);
-    case OP_MODE_INDIRECT: return m_Memory + m_Memory[*pByte];
+    case OP_MODE_MEM:      
+      if (IndPaged)   // used to get indirect address from beginning of a subroutine on current page
+      {
+        return m_Memory + current_page + (*pByte); 
+      }
+      else
+      {
+        return m_Memory + (*pByte);
+      }
+    case OP_MODE_INDIRECT: return m_Memory + indirectAddr;
     case OP_MODE_INDEXED:  return m_Memory + (byte)((*pByte) + m_Memory[REG_X_IDX]);
-    case OP_MODE_INDIND:   return m_Memory + (byte)(m_Memory[*pByte] + m_Memory[REG_X_IDX]);
+    case OP_MODE_INDIND:   return m_Memory + (byte)(indirectAddr + m_Memory[REG_X_IDX]);
+    default:               return pByte; // OP_MODE_CONST or other
+  }
+}
+
+// added for Kenbak-1K: special version for Load A current page
+byte* CPU::GetAddrCP(byte* pByte, byte Mode)
+{
+  // do the addressing modes
+  // regular address and address,indexed uses current page instead of page 0
+  // indirect uses indirect address on page 0 as pointer to address on current page
+  
+  word current_page = ((word)m_Memory[REG_FLAGS_X_IDX] << 2) & 0x300;
+  switch (Mode)
+  {
+    case OP_MODE_MEM: return m_Memory + current_page + (*pByte);
+    case OP_MODE_INDIRECT: return m_Memory + current_page + m_Memory[*pByte];
+    case OP_MODE_INDEXED:  return m_Memory + current_page + (byte)((*pByte) + m_Memory[REG_X_IDX]);
+    case OP_MODE_INDIND:   return m_Memory + current_page + (byte)(m_Memory[*pByte] + m_Memory[REG_X_IDX]);
     default:               return pByte; // OP_MODE_CONST or other
   }
 }
 
 void CPU::ClearAllMemory()
 {
-  memset(m_Memory, 0, 256);
+  memset(m_Memory, 0, 1024);    // was 256 for original Kenbak-1
 }
 
 bool CPU::OnNOOPExtension(byte )
@@ -144,15 +182,16 @@ bool CPU::OnNOOPExtension(byte )
 
 byte* CPU::Memory()
 {
-  // a pointer to the 256 bytes of memory
+  // a pointer to the 1024 bytes of memory
   return m_Memory;
 }
 
-
 byte* CPU::GetNextByte()
 {
-  // note: doesn't do anything special if we wrap around.  We could HALT, but don't
-  return m_Memory + m_Memory[REG_P_IDX]++;
+  // get extended prog ctr consisting of 8-bit REG_P_IDX prepended by two page bits at top of REG_FLAGS_X_IDX
+  word pc = (((word)m_Memory[REG_FLAGS_X_IDX] << 2) & 0x300) + (word)m_Memory[REG_P_IDX];
+  m_Memory[REG_P_IDX]++;    // incr original pc -- note: at 0377, wraps around; does not incr to next oage
+  return m_Memory + pc;     // return pointer into memory array
 }
 
 bool CPU::Step()
@@ -203,7 +242,7 @@ bool CPU::Execute(byte Instruction)
   else if (__R == 2)  // ==================== Bit Test and Manipulation
   {
     byte Mask = 0x01 << _Q_;
-    byte* Addr = GetAddr(GetNextByte(), OP_MODE_MEM);
+    byte* Addr = GetAddr(GetNextByte(), OP_MODE_MEM, false);
     byte One = P__ & 0x01;
     if (P__ & 0x02) // SKIP
     {
@@ -229,10 +268,16 @@ bool CPU::Execute(byte Instruction)
     byte AddressMode = (_Q_ & 0x01) + OP_MODE_CONST;
     byte TestByte = m_Memory[P__];
     byte Condition = 0;
-    byte TargetAddr = *GetAddr(GetNextByte(), AddressMode);
+    byte TargetAddr = *GetAddr(GetNextByte(), AddressMode, true);
 
     if (P__ == 3)
+    {
       Condition = 1;
+      if (__R == OP_TEST_NE)
+      {
+        __R = OP_TEST_EQ;     // change any 0343 opcodes to 0344 so they will reflect page 0  
+      }
+    }
     else if (__R == OP_TEST_NE)
       Condition = TestByte;
     else if (__R == OP_TEST_EQ)
@@ -248,34 +293,63 @@ bool CPU::Execute(byte Instruction)
     {
       if (JumpAndMark)
       {
-        m_Memory[TargetAddr] = m_Memory[REG_P_IDX];
-        TargetAddr++;
+        if (config.m_bKenbakExt)  // if extensions enabled, need to store return address on current page, not always page 0
+        {        
+          word ExtTargetAddr = (((word)m_Memory[REG_FLAGS_X_IDX] << 2) & 0x300) + TargetAddr;
+          m_Memory[ExtTargetAddr] = m_Memory[REG_P_IDX];   // saves just low 8-bits; current page assumed on return
+          TargetAddr++;
+        }
+        else
+        {
+	        m_Memory[TargetAddr] = m_Memory[REG_P_IDX];
+	        TargetAddr++;          
+        }
       }
-      m_Memory[REG_P_IDX] = TargetAddr;
+      // if extensions enabled, unconditional jump but not a JumpAndMark, and not indirect, then will jump to new page
+      if (config.m_bKenbakExt && (P__ == 3) && !(_Q_ & 0x01) && !JumpAndMark)
+      {
+        // set page bits from low two bits of instruction while preserving existing flags
+        // next instruction will be fetched from new page
+        m_Memory[REG_FLAGS_X_IDX] = (__R << 6) | (m_Memory[REG_FLAGS_X_IDX] & 0x03);  
+      }      
+      m_Memory[REG_P_IDX] = TargetAddr;   // low 8 bits of PC
     }
   }
-  else if (P__ == 3)  // ==================== Or, And, Lneg, Noop
+  else if (P__ == 3)  // ==================== Or, And, Lneg, Noop (or Load A current page)
   {
     byte* regA = m_Memory + REG_A_IDX;
-    byte* operand = GetAddr(GetNextByte(), __R);
-    if (_Q_ == 0)  // OR
-      *regA |= *operand;
-    else if (_Q_ == 1) // (NOOP)
-      return OnNOOPExtension(Instruction);
-    else if (_Q_ == 2) // AND
-      *regA &= *operand;
-    else if (_Q_ == 3) // LNEG
+    if (_Q_ == 1) // (NOP or Load A current page)
     {
-      signed char Temp = -(signed char)(*operand);
-      *regA = (byte)Temp;
-      // flags are not set
+      if (config.m_bKenbakExt)  // if extensions enabled, then this is a Load A current page instr
+      {
+        byte* operand = GetAddrCP(GetNextByte(), __R);
+        *regA = *operand;         
+      }
+      else
+      {
+        return OnNOOPExtension(Instruction);
+      }
+    }
+    else
+    {    
+      byte* operand = GetAddr(GetNextByte(), __R, false);
+      if (_Q_ == 0)  // OR
+        *regA |= *operand;
+      else if (_Q_ == 2) // AND
+        *regA &= *operand;
+      else if (_Q_ == 3) // LNEG
+      {
+        signed char Temp = -(signed char)(*operand);
+        *regA = (byte)Temp;
+        // flags are not set
+      }
     }
   }
   else  // ==================== Add, Sub, Load, Store
   {
     byte* pLHS = m_Memory + P__;
     byte* pFlags = m_Memory + REG_FLAGS_A_IDX + P__;
-    byte* pRHS = GetAddr(GetNextByte(), __R);
+    byte* pRHS = GetAddr(GetNextByte(), __R, false);
     word LHS = *pLHS;
     word RHS = *pRHS;
     word Result;
@@ -283,7 +357,7 @@ bool CPU::Execute(byte Instruction)
     {
       Result = LHS + RHS;
       *pLHS = (byte)Result;
-      *pFlags = 0;
+      *pFlags  &= ~0x03;  // only clear out bottom two bits; top two bits of X reg used as page #
       if (Result & 0xFF00)
         *pFlags |= 0x02; // carry
 
@@ -295,7 +369,7 @@ bool CPU::Execute(byte Instruction)
     {
       Result = LHS - RHS;
       *pLHS = (byte)Result;
-      *pFlags = 0;
+      *pFlags  &= ~0x03;  // only clear out bottom two bits; top two bits of X reg used as page #
       if (Result & 0xFF00)
         *pFlags |= 0x02; // carry (borrow)
 
@@ -310,6 +384,3 @@ bool CPU::Execute(byte Instruction)
   }
   return true;
 }
-
-
-

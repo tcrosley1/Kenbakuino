@@ -16,6 +16,12 @@
 //            Added Clock consts for no RTC or RTC with no SRAM
 //  Jun 2019: Added system extensions to read/write EEPROM
 // ==================================================================
+//  Software emulation of a KENBAK-1K -- based on Mark Wilson's Jun 2019 code,
+//  with extensions by Tom Crosley, 2019
+//  Released under Creative Commons Attribution, CC BY
+//  (tcrosley at softwest dot com)
+//  Jul 2019: Added paging to extend to 1K memory, plus LDACP instruction
+// ==================================================================
 
 // WTF.  We need to include these in the "main sketch" if we want to include them in "tabs"?
 #include <Arduino.h>
@@ -49,6 +55,3 @@ void loop()
 {
   mcp.Loop();
 }
-
-
-
