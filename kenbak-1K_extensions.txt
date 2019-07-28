@@ -245,7 +245,68 @@ http://www.softwest.com/kenbak_asm/sendtokenbak.py
 http://www.softwest.com/kenbak_asm/sendtokenbak.params
 
 Again, documentation is at the beginning of the Python file.
+
+7. Dealing with common subroutines
+----------------------------------
+
+Unfortunately, the current scheme only allows calls (jump and mark) to the
+current page.  This makes it impossible to have a subroutine that can be
+easily shared amongst several pages.  That would have been nice, but I wanted
+to keep changes as minimal as possible, and since the Kenbak only stores
+the low 8-bits of the now extended PC into the first byte of the subroutine,
+I would have had to make use of a second byte to store the page bits -- and
+that would have broken all existing code.  So I didn't do that.
+
+A couple of ways to get around this.  If one has a large subroutine, that
+is referenced several times from just one page, then it is pretty trivial to
+put that subroutine on another page, and create a small subroutine on the
+current page that jumps to the larger body of code and then jumps back, e.g.
+
+    org 01000   page 2
+enterhere   
+# other code
+    call    mysub   calls to common large subroutine
+# other code
+    call    mysub
+# other code
+    jmp     somewhere
+
+mysub nop   return address for this page goes here
+    jmp     subcontinue jump to page 3 to continue body of sub
+subreturn
+    jmp     (mysub)     return to caller on this page    
+
+    org 01400   page 3
+subcontinue
+# code for body of subroutine goes here
+    jmp subreturn
  
+So this ends up taking only four extra bytes to have the common subroutine on
+another page.
+
+Creating a subroutine that can be used from any page is a little more
+complicated; now you need separate landing spots for jumps from each page, and
+then have them call the real subroutine on that page.
+
+    org 01400   page 3
+# sued for "calls" from page 1
+subcontinue1
+    call    myrealsub
+    jmp     subreturn1
+# used for "calls" from page 2
+subcontinue2
+    call    myrealsub
+    jmp     subreturn2
+
+myrealsub nop       can also be called directly from page 3
+# code for body of subroutine goes here
+    jmp     (myrealsub)
+
+So this adds a few extra bytes, but for a long subroutine accessible from any
+page, still worth it.
+
+ 
+
 
 
 
